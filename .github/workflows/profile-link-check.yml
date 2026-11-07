@@ -1,0 +1,40 @@
+name: Profile link check
+
+# Verifies that every outbound link on the public GitHub profile README
+# still resolves. A dead link on the profile is a dead front door.
+# 403s are reported as WARN (bot walls are not link rot); connection
+# failures, 404/410 and 5xx fail the run.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - .github/workflows/profile-link-check.yml
+  schedule:
+    - cron: "44 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract and check every URL in README.md
+        run: |
+          set -u
+          mapfile -t urls < <(grep -oE 'https?://[^[:space:]\)]+' README.md | sort -u)
+          echo "Found ${#urls[@]} unique URLs in README.md"
+          fail=0
+          for u in "${urls[@]}"; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-redirs 5 --connect-timeout 10 --max-time 30 -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' "$u" || echo 000)
+            case "$code" in
+              2*|3*) echo "OK   $code  $u" ;;
+              403)   echo "WARN 403  $u (bot wall, not link rot)" ;;
+              *)     echo "FAIL $code  $u"; fail=1 ;;
+            esac
+          done
+          exit $fail
